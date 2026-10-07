@@ -155,13 +155,15 @@ function afficherSieste(reste) {
   siesteActive = reste !== 0;
   siesteReste = reste;
   $("btnSieste").textContent = !siesteActive ? "Démarrer la sieste"
-    : reste > 0 ? "Arrêter la sieste (passer au vert)" : "Terminer la sieste";
+    : reste > 600 ? "Arrêter la sieste (orange 5 min)"
+    : reste > 0 ? "Passer au vert maintenant" : "Terminer la sieste";
   $("dureeSieste").disabled = siesteActive;
   $("siesteInfo").style.display = siesteActive ? "" : "none";
   if (!siesteActive) return;
   const fin = new Date(Date.now() + reste * 1000);
-  $("siesteInfo").textContent = reste > 0
-    ? "Sieste en cours · vert à " + pad(fin.getHours()) + ":" + pad(fin.getMinutes())
+  const hFin = pad(fin.getHours()) + ":" + pad(fin.getMinutes());
+  $("siesteInfo").textContent = reste > 600 ? "Sieste en cours · vert à " + hFin
+    : reste > 0 ? "Orange · vert à " + hFin
     : "Sieste terminée · vert encore quelques minutes";
 }
 
@@ -231,10 +233,12 @@ async function enregistrer() {
 async function sieste() {
   try {
     $("btnSieste").disabled = true;
-    const etaitActive = siesteActive, etaitAvantVert = siesteReste > 0;
+    const avant = siesteActive ? siesteReste : null;
     await envoyer("n", siesteActive ? 0 : $("dureeSieste").value);
     await lire();
-    msg(!etaitActive ? "Bonne sieste !" : etaitAvantVert ? "Sieste arrêtée · passage au vert" : "Sieste terminée");
+    msg(avant === null ? "Bonne sieste !"
+      : avant > 600 ? "Orange pendant 5 min, puis vert"
+      : avant > 0 ? "Passage au vert" : "Sieste terminée");
   } catch (e) {
     msg("Erreur : " + e.message);
   } finally {
