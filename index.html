@@ -22,6 +22,7 @@
   input[type=range] { flex:1; }
   .lum { display:flex; align-items:center; gap:10px; margin:12px 0; }
   .dot { width:14px; height:14px; border-radius:50%; flex:none; }
+  .ts { font-size:13px; color:var(--mut); }
   .val { width:42px; text-align:right; font-variant-numeric:tabular-nums; }
   button { font-size:16px; border-radius:10px; border:1px solid var(--bord); background:var(--card);
     color:var(--txt); padding:10px 14px; }
@@ -59,6 +60,13 @@
         <button class="mini" data-p="v" data-k="lv">Tester</button></div>
     </div>
 
+    <div class="card">
+      <label for="to">Teinte de l'orange</label>
+      <div class="lum"><span class="ts">rouge</span>
+        <input type="range" id="to" min="0" max="40"><span class="ts">jaune</span>
+        <span class="val" id="toV"></span></div>
+    </div>
+
     <button class="prim" id="btnSave">Enregistrer</button>
   </div>
   <p id="msg"></p>
@@ -84,7 +92,8 @@ async function envoyer(cle, val) {
 
 async function lire() {
   const v = dec.decode(await carac.readValue()).split(",").map(Number);
-  const [t, c, r, o, vd, lr, lo, lv, e] = v;
+  const [t, c, r, o, vd, lr, lo, lv, e, to] = v;
+  $("to").value = to; $("toV").textContent = to;
   $("coucher").value = minToTime(c);
   $("reveil").value = minToTime(r);
   $("orange").value = o;
@@ -129,6 +138,7 @@ async function enregistrer() {
     await envoyer("lr", $("lr").value);
     await envoyer("lo", $("lo").value);
     await envoyer("lv", $("lv").value);
+    await envoyer("to", $("to").value);
     await envoyer("s", 1);
     await lire();
     msg("Enregistré ✓");
@@ -146,6 +156,12 @@ if (!navigator.bluetooth) {
 $("btnCo").onclick = connecter;
 $("btnSave").onclick = enregistrer;
 for (const k of ["lr", "lo", "lv"]) $(k).oninput = () => $(k + "V").textContent = $(k).value + " %";
+// Teinte : aperçu orange en direct quand on relâche le curseur
+$("to").oninput = () => $("toV").textContent = $("to").value;
+$("to").onchange = async () => {
+  try { await envoyer("lo", $("lo").value); await envoyer("to", $("to").value); await envoyer("p", "o"); }
+  catch (e) { msg("Erreur : " + e.message); }
+};
 document.querySelectorAll("button[data-p]").forEach(b => b.onclick = async () => {
   try { await envoyer(b.dataset.k, $(b.dataset.k).value); await envoyer("p", b.dataset.p); }
   catch (e) { msg("Erreur : " + e.message); }
