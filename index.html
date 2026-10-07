@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f2433">
+<title>Réveil enfants</title>
+<style>
+  :root { --bg:#f6f5f1; --card:#fff; --txt:#22222a; --mut:#6b6b74; --bord:#dedcd5; --acc:#3c6fd8; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16181f; --card:#20232d; --txt:#ecebe6; --mut:#9a9aa3; --bord:#343846; --acc:#7da2f0; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--txt); }
+  main { max-width:440px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; font-weight:600; margin:4px 0 16px; }
+  .card { background:var(--card); border:1px solid var(--bord); border-radius:14px; padding:16px; margin-bottom:14px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px 0; }
+  label { color:var(--mut); font-size:15px; }
+  input[type=time], input[type=number] { font-size:18px; padding:6px 8px; border-radius:8px;
+    border:1px solid var(--bord); background:var(--bg); color:var(--txt); width:120px; text-align:center; }
+  input[type=range] { flex:1; }
+  .lum { display:flex; align-items:center; gap:10px; margin:12px 0; }
+  .dot { width:14px; height:14px; border-radius:50%; flex:none; }
+  .val { width:42px; text-align:right; font-variant-numeric:tabular-nums; }
+  button { font-size:16px; border-radius:10px; border:1px solid var(--bord); background:var(--card);
+    color:var(--txt); padding:10px 14px; }
+  button.prim { width:100%; background:var(--acc); color:#fff; border:none; padding:14px; font-size:17px; }
+  button.mini { padding:6px 10px; font-size:14px; }
+  button:disabled { opacity:.45; }
+  #etat { font-size:15px; color:var(--mut); margin:0 0 14px; }
+  #msg { text-align:center; color:var(--mut); min-height:22px; margin-top:12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Réveil enfants</h1>
+  <p id="etat">Non connecté</p>
+  <button class="prim" id="btnCo">Connecter</button>
+
+  <div id="reglages" style="margin-top:14px; display:none">
+    <div class="card">
+      <div class="row"><label for="reveil">Réveil (vert)</label><input type="time" id="reveil"></div>
+      <div class="row"><label for="coucher">Coucher (rouge)</label><input type="time" id="coucher"></div>
+      <div class="row"><label for="orange">Orange avant (min)</label><input type="number" id="orange" min="0" max="180"></div>
+      <div class="row"><label for="vert">Vert pendant (min)</label><input type="number" id="vert" min="0" max="600"></div>
+    </div>
+
+    <div class="card">
+      <label>Luminosité</label>
+      <div class="lum"><span class="dot" style="background:#e0443e"></span>
+        <input type="range" id="lr" min="1" max="100"><span class="val" id="lrV"></span>
+        <button class="mini" data-p="r" data-k="lr">Tester</button></div>
+      <div class="lum"><span class="dot" style="background:#f0952a"></span>
+        <input type="range" id="lo" min="1" max="100"><span class="val" id="loV"></span>
+        <button class="mini" data-p="o" data-k="lo">Tester</button></div>
+      <div class="lum"><span class="dot" style="background:#4fa83a"></span>
+        <input type="range" id="lv" min="1" max="100"><span class="val" id="lvV"></span>
+        <button class="mini" data-p="v" data-k="lv">Tester</button></div>
+    </div>
+
+    <button class="prim" id="btnSave">Enregistrer</button>
+  </div>
+  <p id="msg"></p>
+</main>
+
+<script>
+const SERVICE = "6f1c0001-3b7a-4c55-9a2e-7d1e5a0c0001";
+const CHAR    = "6f1c0002-3b7a-4c55-9a2e-7d1e5a0c0001";
+const ETATS = ["éteint", "rouge", "orange", "vert", "heure inconnue"];
+const $ = id => document.getElementById(id);
+let device = null, carac = null;
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+const minToTime = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+const timeToMin = s => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+const heureLocale = () => Math.floor(Date.now() / 1000) - new Date().getTimezoneOffset() * 60;
+
+function msg(t) { $("msg").textContent = t; }
+
+async function envoyer(cle, val) {
+  await carac.writeValueWithResponse(enc.encode(cle + "=" + val));
+}
+
+async function lire() {
+  const v = dec.decode(await carac.readValue()).split(",").map(Number);
+  const [t, c, r, o, vd, lr, lo, lv, e] = v;
+  $("coucher").value = minToTime(c);
+  $("reveil").value = minToTime(r);
+  $("orange").value = o;
+  $("vert").value = vd;
+  for (const [k, x] of [["lr", lr], ["lo", lo], ["lv", lv]]) { $(k).value = x; $(k + "V").textContent = x + " %"; }
+  const d = new Date(t * 1000);
+  const h = String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0");
+  $("etat").textContent = "Connecté · heure du réveil " + h + " · " + ETATS[e];
+}
+
+async function connecter() {
+  try {
+    msg("Recherche…");
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: "Reveil" }], optionalServices: [SERVICE] });
+    device.addEventListener("gattserverdisconnected", () => {
+      $("etat").textContent = "Déconnecté";
+      $("reglages").style.display = "none";
+      $("btnCo").style.display = "";
+    });
+    const server = await device.gatt.connect();
+    carac = await (await server.getPrimaryService(SERVICE)).getCharacteristic(CHAR);
+    await envoyer("t", heureLocale());   // synchro automatique de l'heure
+    await lire();
+    $("reglages").style.display = "";
+    $("btnCo").style.display = "none";
+    msg("Heure synchronisée");
+  } catch (e) {
+    msg("Erreur : " + e.message);
+  }
+}
+
+async function enregistrer() {
+  try {
+    $("btnSave").disabled = true;
+    msg("Envoi…");
+    await envoyer("t", heureLocale());
+    await envoyer("r", timeToMin($("reveil").value));
+    await envoyer("c", timeToMin($("coucher").value));
+    await envoyer("o", $("orange").value);
+    await envoyer("v", $("vert").value);
+    await envoyer("lr", $("lr").value);
+    await envoyer("lo", $("lo").value);
+    await envoyer("lv", $("lv").value);
+    await envoyer("s", 1);
+    await lire();
+    msg("Enregistré ✓");
+  } catch (e) {
+    msg("Erreur : " + e.message);
+  } finally {
+    $("btnSave").disabled = false;
+  }
+}
+
+if (!navigator.bluetooth) {
+  msg("Ce navigateur ne gère pas le Bluetooth. Utilisez Chrome sur Android.");
+  $("btnCo").disabled = true;
+}
+$("btnCo").onclick = connecter;
+$("btnSave").onclick = enregistrer;
+for (const k of ["lr", "lo", "lv"]) $(k).oninput = () => $(k + "V").textContent = $(k).value + " %";
+document.querySelectorAll("button[data-p]").forEach(b => b.onclick = async () => {
+  try { await envoyer(b.dataset.k, $(b.dataset.k).value); await envoyer("p", b.dataset.p); }
+  catch (e) { msg("Erreur : " + e.message); }
+});
+</script>
+</body>
+</html>
