@@ -1,0 +1,43 @@
+# Compile le programme du réveil à chaque modification de firmware/reveil/
+# et publie le .bin + version.json à côté de la page (mise à jour sans fil).
+name: Compiler le programme du réveil
+on:
+  push:
+    paths: ["firmware/reveil/**", ".github/workflows/firmware.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+concurrency: firmware
+jobs:
+  compiler:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Installer la carte ESP32
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+      - name: Compiler
+        run: |
+          arduino-cli compile --fqbn "esp32:esp32:XIAO_ESP32C3:PartitionScheme=min_spiffs,CDCOnBoot=default" \
+            --output-dir build firmware/reveil
+          ls -l build
+      - name: Publier le .bin
+        run: |
+          V=$(grep -oP 'const int VERSION = \K[0-9]+' firmware/reveil/reveil.ino)
+          echo "Version $V"
+          cp build/reveil.ino.bin firmware/reveil_v$V.bin
+          echo "{\"version\": $V, \"fichier\": \"firmware/reveil_v$V.bin\"}" > firmware/version.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add firmware/reveil_v$V.bin firmware/version.json
+          git commit -m "Programme v$V compilé automatiquement" || echo "rien de nouveau"
+          git push
+      - name: Relancer la publication de la page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" || true
