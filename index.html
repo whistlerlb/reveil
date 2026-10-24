@@ -33,6 +33,10 @@
   button:disabled { opacity:.45; }
   #etat { font-size:15px; color:var(--mut); margin:0 0 14px; }
   #siesteInfo { font-size:15px; margin:8px 0 2px; }
+  #batterie { font-size:15px; margin:0 0 14px; }
+  #batterie.basse { color:#d0502c; font-weight:600; }
+  progress { width:100%; height:14px; margin:10px 0 4px; }
+  .petit { font-size:13px; color:var(--mut); margin:6px 0; }
   #msg { text-align:center; color:var(--mut); min-height:22px; margin-top:12px; }
 </style>
 </head>
@@ -40,6 +44,7 @@
 <main>
   <h1>Réveil enfants</h1>
   <p id="etat">Non connecté</p>
+  <p id="batterie" style="display:none"></p>
   <button class="prim" id="btnCo">Connecter</button>
 
   <div id="reglages" style="margin-top:14px; display:none">
@@ -87,6 +92,16 @@
     </div>
 
     <button class="prim" id="btnSave">Enregistrer</button>
+
+    <div class="card" id="carteMaj" style="display:none; margin-top:14px">
+      <h2>Mise à jour du réveil</h2>
+      <p class="petit" id="versionInfo"></p>
+      <button id="btnMajLigne" style="width:100%; display:none"></button>
+      <div class="row"><label for="fichierMaj">Ou un fichier .bin</label>
+        <input type="file" id="fichierMaj" accept=".bin" style="width:180px"></div>
+      <progress id="progMaj" max="1" value="0" style="display:none"></progress>
+      <p class="petit" id="majInfo"></p>
+    </div>
   </div>
   <p id="msg"></p>
 </main>
@@ -94,9 +109,10 @@
 <script>
 const SERVICE = "6f1c0001-3b7a-4c55-9a2e-7d1e5a0c0001";
 const CHAR    = "6f1c0002-3b7a-4c55-9a2e-7d1e5a0c0001";
+const OTA     = "6f1c0003-3b7a-4c55-9a2e-7d1e5a0c0001";
 const ETATS = ["éteint", "rouge", "orange", "vert", "heure inconnue"];
 const $ = id => document.getElementById(id);
-let carac = null, siesteActive = false, siesteReste = 0, minuteur = null;
+let carac = null, caracMaj = null, versionReveil = 0, majEnCours = false, enLigne = null, siesteActive = false, siesteReste = 0, minuteur = null;
 const enc = new TextEncoder(), dec = new TextDecoder();
 const pad = n => String(n).padStart(2, "0");
 const minToTime = m => pad(Math.floor(m / 60)) + ":" + pad(m % 60);
@@ -167,9 +183,35 @@ function afficherSieste(reste) {
     : "Sieste terminée · vert encore quelques minutes";
 }
 
+// Pourcentage approximatif d'une LiPo 3,7 V au repos (tension en mV)
+const COURBE = [[3300, 0], [3610, 5], [3690, 10], [3710, 15], [3730, 20], [3770, 30], [3800, 40],
+                [3840, 50], [3870, 60], [3950, 70], [4020, 80], [4110, 90], [4200, 100]];
+function pourcent(mv) {
+  if (mv <= COURBE[0][0]) return 0;
+  for (let i = 1; i < COURBE.length; i++) {
+    const [v1, p1] = COURBE[i - 1], [v2, p2] = COURBE[i];
+    if (mv <= v2) return Math.round(p1 + (p2 - p1) * (mv - v1) / (v2 - v1));
+  }
+  return 100;
+}
+
+function afficherBatterie(mv, bas) {
+  const b = $("batterie");
+  b.style.display = "";
+  b.className = bas ? "basse" : "";
+  if (mv < 3000) { b.textContent = "Batterie : non détectée (sur USB)"; return; }
+  const v = (mv / 1000).toFixed(2).replace(".", ",");
+  b.textContent = mv > 4250 ? "Batterie : en charge (" + v + " V)"
+    : "Batterie : " + pourcent(mv) + " % (" + v + " V)" + (bas ? " · faible, à recharger" : "");
+}
+
 async function lire() {
-  const [t, c, rs, rw, o, vd, lr, lo, lv, e, to, sieste] =
-    dec.decode(await carac.readValue()).split(",").map(Number);
+  if (majEnCours) return;
+  const champs = dec.decode(await carac.readValue()).split(",").map(Number);
+  const [t, c, rs, rw, o, vd, lr, lo, lv, e, to, sieste, version, mv, bas] = champs;
+  versionReveil = version || 3;
+  if (champs.length > 13) afficherBatterie(mv, bas === 1);
+  afficherVersion();
   $("coucher").value = minToTime(c);
   $("rs").value = minToTime(rs);
   $("rw").value = minToTime(rw);
@@ -192,9 +234,15 @@ async function connecter() {
       $("etat").textContent = "Déconnecté";
       $("reglages").style.display = "none";
       $("btnCo").style.display = "";
+      $("batterie").style.display = "none";
+      if (majEnCours) $("majInfo").textContent = "Connexion perdue pendant la mise à jour : le réveil garde l'ancienne version.";
+      majEnCours = false;
     });
     const server = await device.gatt.connect();
-    carac = await (await server.getPrimaryService(SERVICE)).getCharacteristic(CHAR);
+    const service = await server.getPrimaryService(SERVICE);
+    carac = await service.getCharacteristic(CHAR);
+    caracMaj = await service.getCharacteristic(OTA).catch(() => null);   // absente avant la v4
+    $("carteMaj").style.display = caracMaj ? "" : "none";
     await synchroHeure();                         // heure + fuseau à chaque connexion
     await lire();
     $("reglages").style.display = "";
@@ -245,6 +293,82 @@ async function sieste() {
     $("btnSieste").disabled = false;
   }
 }
+
+// ---------- Mise à jour sans fil ----------
+
+async function lireEtatMaj() {
+  const f = dec.decode(await carac.readValue()).split(",").map(Number);
+  return { etat: f[15], recu: f[16] };
+}
+
+async function chercherEnLigne() {
+  try {
+    const r = await fetch("firmware/version.json", { cache: "no-store" });
+    if (r.ok) enLigne = await r.json();
+  } catch (e) { enLigne = null; }
+  afficherVersion();
+}
+
+function afficherVersion() {
+  $("versionInfo").textContent = "Version du réveil : " + versionReveil +
+    (enLigne ? " · dernière version : " + enLigne.version : "");
+  const b = $("btnMajLigne");
+  b.style.display = enLigne && enLigne.version > versionReveil && !majEnCours ? "" : "none";
+  if (enLigne) b.textContent = "Installer la version " + enLigne.version;
+}
+
+async function installer(buf) {
+  const octets = new Uint8Array(buf);
+  if (octets[0] !== 0xE9) { $("majInfo").textContent = "Ce fichier n'est pas un programme ESP32 (.bin)."; return; }
+  if (!confirm("Installer ce programme (" + Math.round(octets.length / 1024) + " ko) ? Gardez le téléphone près du réveil pendant 2 à 3 minutes.")) return;
+  majEnCours = true;
+  afficherVersion();
+  const prog = $("progMaj"), info = $("majInfo");
+  prog.style.display = ""; prog.value = 0;
+  try {
+    await envoyer("u", octets.length);
+    if ((await lireEtatMaj()).etat !== 1) throw new Error("le réveil refuse la mise à jour (place insuffisante ?)");
+    const T = 180, debut = Date.now();
+    for (let i = 0, k = 0; i < octets.length; i += T, k++) {
+      const morceau = octets.slice(i, i + T);
+      // un paquet sur 16 avec accusé de réception : évite de saturer le réveil
+      if (k % 16 === 15) await caracMaj.writeValueWithResponse(morceau);
+      else await caracMaj.writeValueWithoutResponse(morceau);
+      if (k % 16 === 15) {
+        prog.value = i / octets.length;
+        const s = (Date.now() - debut) / 1000 * (octets.length - i) / i;
+        info.textContent = "Envoi… " + Math.round(i / octets.length * 100) + " % · encore " + Math.ceil(s / 60) + " min environ";
+      }
+    }
+    prog.value = 1;
+    info.textContent = "Vérification…";
+    await envoyer("u", "fin");
+    const r = await lireEtatMaj();
+    if (r.etat !== 2) throw new Error("fichier incomplet ou invalide (" + r.recu + " / " + octets.length + " octets reçus)");
+    info.textContent = "Mise à jour réussie ✓ Le réveil redémarre ; reconnectez-vous dans quelques secondes.";
+  } catch (e) {
+    info.textContent = "Échec : " + e.message + ". Le réveil garde l'ancienne version.";
+    try { await envoyer("u", "annule"); } catch (_) {}
+  } finally {
+    majEnCours = false;
+    afficherVersion();
+  }
+}
+
+$("btnMajLigne").onclick = async () => {
+  try {
+    $("majInfo").textContent = "Téléchargement…";
+    const r = await fetch(enLigne.fichier, { cache: "no-store" });
+    if (!r.ok) throw new Error("fichier introuvable");
+    await installer(await r.arrayBuffer());
+  } catch (e) { $("majInfo").textContent = "Échec : " + e.message; }
+};
+$("fichierMaj").onchange = async () => {
+  const f = $("fichierMaj").files[0];
+  if (f) await installer(await f.arrayBuffer());
+  $("fichierMaj").value = "";
+};
+chercherEnLigne();
 
 if (!navigator.bluetooth) {
   msg("Ce navigateur ne gère pas le Bluetooth. Utilisez Chrome sur Android.");
