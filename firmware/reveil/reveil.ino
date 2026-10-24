@@ -1,4 +1,5 @@
-// Réveil enfants — v7
+// Réveil enfants — v8
+// v8 : test de la compilation automatique par GitHub (aucun changement de fonctionnement).
 // v7 : étalonnage de la batterie retiré (la mesure brute était juste : 3,745 V lus pour 3,73 V réels).
 // v6 : mesure de batterie étalonnée (3,91 V lus pour 3,79 V réels), un peu moins de vert dans le jaune.
 // v5 : curseur de teinte recalibré (100 = vrai jaune : le vert de la LED est bien plus lumineux que le rouge).
@@ -57,7 +58,7 @@ const int PIN_R = 5;  // D3
 const int PIN_G = 4;  // D2
 const int PIN_B = 3;  // D1
 const int PIN_BAT = 2;  // D0 (A0) : milieu du pont 220k / 220k depuis BAT+
-const int VERSION = 7;
+const int VERSION = 8;
 const float BAT_ETALON = 1.0f;   // facteur de correction (1 = mesure brute, vérifiée au multimètre)
 const float VERT_MAX_ORANGE = 0.4f;   // part de vert (en courant) quand le curseur de teinte est à 100
 const int BAT_BAS_MV = 3700, BAT_OK_MV = 3800, BAT_ABSENTE_MV = 3000;
@@ -356,7 +357,7 @@ void setup() {
   setCpuFrequencyMhz(80);
   Serial.begin(115200);
   delay(500);
-  Serial.println("Réveil enfants v7");
+  Serial.println("Réveil enfants v8");
 
   ledcAttach(PIN_R, 5000, PWM_BITS);
   ledcAttach(PIN_G, 5000, PWM_BITS);
